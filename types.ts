@@ -30,8 +30,16 @@ export interface ScaleImage {
   date: string;
 }
 
+export interface AuditLog {
+  id: string;
+  user: string;
+  action: string;
+  timestamp: string;
+}
+
 export interface AppData {
   ministers: Minister[];
   scaleImages: ScaleImage[];
   rehearsalInfo: string;
+  logs: AuditLog[];
 }

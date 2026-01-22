@@ -3,7 +3,7 @@ import { MusicKey, AppData } from './types';
 
 export const MUSIC_KEYS = Object.values(MusicKey);
 
-export const STORAGE_KEY = 'ipac_praise_app_data_v1';
+export const STORAGE_KEY = 'ipac_praise_app_data_v2_audit';
 
 export const INITIAL_DATA: AppData = {
   ministers: [
@@ -15,5 +15,6 @@ export const INITIAL_DATA: AppData = {
     { id: 'minister-carlao', name: 'Carlão', songs: [] },
   ],
   scaleImages: [],
-  rehearsalInfo: 'Toda Quarta-feira às 19:30 e Domingo às 17:30.\n\nAVISO: Proibido chegar mais que 10 minutos atrasado sem aviso prévio!'
+  rehearsalInfo: 'Toda Quarta-feira às 19:30 e Domingo às 17:30.\n\nAVISO: Proibido chegar mais que 10 minutos atrasado sem aviso prévio!',
+  logs: []
 };
