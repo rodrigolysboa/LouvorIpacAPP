@@ -1,0 +1,7 @@
+{
+  "name": "Copy of LOUVOR IPAC V2",
+  "description": "Aplicativo colaborativo para gestão de ministros, músicas e escalas do grupo de louvor da Igreja IPAC.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
