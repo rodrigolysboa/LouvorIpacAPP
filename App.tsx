@@ -18,7 +18,6 @@ import {
   Check,
   AlertTriangle,
   User,
-  Wifi,
   WifiOff,
   Cloud,
   CloudOff
@@ -71,10 +70,13 @@ const App: React.FC = () => {
   });
 
   const isUpdatingRef = useRef(false);
+  // Fixed: Replaced NodeJS.Timeout with ReturnType<typeof setTimeout> to resolve the namespace error in browser-based environments.
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // FUNÇÃO: Sincronizar com a Nuvem
+  // FUNÇÃO: Carregar da Nuvem
   const loadFromCloud = useCallback(async () => {
-    if (isUpdatingRef.current) return;
+    // Se o usuário estiver editando ou o app estiver salvando, não baixamos dados novos agora para evitar conflitos
+    if (isUpdatingRef.current || isEditingRehearsal) return;
     
     try {
       const response = await fetch(CLOUD_URL, {
@@ -88,7 +90,7 @@ const App: React.FC = () => {
       
       const remoteData = await response.json();
       
-      // Só atualiza se o conteúdo for diferente para economizar renderização
+      // Só atualiza se o conteúdo for diferente
       if (JSON.stringify(remoteData) !== JSON.stringify(data)) {
         setData(remoteData);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(remoteData));
@@ -98,37 +100,43 @@ const App: React.FC = () => {
       console.warn('Modo Offline: Sincronização falhou.');
       setSyncStatus('local');
     }
-  }, [data]);
+  }, [data, isEditingRehearsal]);
 
-  const saveToCloud = async (updatedData: AppData) => {
+  // FUNÇÃO: Salvar na Nuvem (com Debounce para evitar erros de limite)
+  const saveToCloud = useCallback(async (updatedData: AppData) => {
     setSyncStatus('syncing');
     isUpdatingRef.current = true;
     
-    // Salva no local imediatamente (otimismo)
+    // Salva no local imediatamente para o usuário não sentir lentidão
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
 
-    try {
-      const response = await fetch(CLOUD_URL, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Master-Key': API_KEY
-        },
-        body: JSON.stringify(updatedData)
-      });
-      
-      if (!response.ok) throw new Error('Falha no upload');
-      setSyncStatus('synced');
-    } catch (e) {
-      console.error(e);
-      setSyncStatus('error');
-    } finally {
-      isUpdatingRef.current = false;
-    }
-  };
+    // Cancela o timeout anterior se houver
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+
+    // Aguarda 1.5 segundos após a última alteração para enviar ao servidor
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        const response = await fetch(CLOUD_URL, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Master-Key': API_KEY
+          },
+          body: JSON.stringify(updatedData)
+        });
+        
+        if (!response.ok) throw new Error('Falha no upload');
+        setSyncStatus('synced');
+      } catch (e) {
+        console.error('Erro ao salvar na nuvem:', e);
+        setSyncStatus('error');
+      } finally {
+        isUpdatingRef.current = false;
+      }
+    }, 1500);
+  }, []);
 
   useEffect(() => {
-    // Carregamento inicial da nuvem
     loadFromCloud();
     // Verifica atualizações a cada 20 segundos
     const interval = setInterval(loadFromCloud, 20000);
@@ -156,7 +164,7 @@ const App: React.FC = () => {
     setConfirmModal({
       show: true,
       title: 'Excluir Ministro',
-      message: `Deseja remover ${name}? Isso apagará as músicas dele globalmente.`,
+      message: `Deseja remover ${name}? Isso apagará as músicas dele para todos os membros.`,
       onConfirm: () => {
         triggerUpdate({ ...data, ministers: data.ministers.filter(m => m.id !== id) });
         setConfirmModal(prev => ({ ...prev, show: false }));
@@ -202,8 +210,8 @@ const App: React.FC = () => {
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      alert("Imagem muito grande! Use fotos de até 2MB.");
+    if (file.size > 1.5 * 1024 * 1024) {
+      alert("Imagem muito pesada! Reduza a foto ou use uma de até 1.5MB.");
       return;
     }
     const reader = new FileReader();
@@ -223,7 +231,7 @@ const App: React.FC = () => {
     setConfirmModal({
       show: true,
       title: 'Excluir Escala',
-      message: 'Remover esta foto da escala para todos?',
+      message: 'Remover esta foto da escala global?',
       onConfirm: () => {
         triggerUpdate({ ...data, scaleImages: data.scaleImages.filter(img => img.id !== id) });
         setConfirmModal(prev => ({ ...prev, show: false }));
@@ -239,7 +247,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen pb-24 bg-slate-50 text-slate-900 font-sans selection:bg-indigo-100">
       {/* Header Fixo */}
-      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 px-4 py-3 md:px-8 shadow-sm">
+      <header className="bg-white/90 backdrop-blur-md border-b border-slate-200 sticky top-0 z-40 px-4 py-3 md:px-8 shadow-sm">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div className="flex items-center gap-3">
             <div className="bg-indigo-600 p-2.5 rounded-2xl text-white shadow-lg shadow-indigo-100">
@@ -273,10 +281,13 @@ const App: React.FC = () => {
               </button>
             )}
             {syncStatus === 'error' && (
-              <div className="flex items-center gap-2 text-[10px] font-black text-red-600 bg-red-50 px-3 py-1.5 rounded-full border border-red-100">
+              <button 
+                onClick={loadFromCloud}
+                className="flex items-center gap-2 text-[10px] font-black text-red-600 bg-red-50 px-3 py-1.5 rounded-full border border-red-100 hover:bg-red-100"
+              >
                 <WifiOff size={12} />
-                ERRO
-              </div>
+                ERRO - RECONECTAR
+              </button>
             )}
           </div>
         </div>
@@ -332,7 +343,7 @@ const App: React.FC = () => {
               ))}
             </div>
 
-            {/* Informações de Ensaio */}
+            {/* Agenda e Avisos */}
             <div className="mt-20 bg-white border border-slate-200 rounded-[2.5rem] p-8 shadow-sm">
               <div className="flex justify-between items-center mb-8">
                 <div className="flex items-center gap-3 text-slate-900 font-black text-xs uppercase tracking-widest">
@@ -369,7 +380,7 @@ const App: React.FC = () => {
                       <AlertTriangle size={18} />
                     </div>
                     <p className="text-xs font-black text-red-700 leading-snug uppercase tracking-tight">
-                      Proibido atrasos acima de 10 min. Avisar no grupo se houver imprevistos!
+                      Atenção: Atrasos acima de 10 min não são tolerados. Avisar no grupo se houver imprevistos.
                     </p>
                   </div>
                 </div>
@@ -385,7 +396,7 @@ const App: React.FC = () => {
               </h2>
               <label className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-2xl shadow-xl transition-all hover:scale-105 cursor-pointer flex items-center gap-2">
                 <Plus size={20} />
-                <span className="hidden sm:inline font-bold text-sm">Postar Escala</span>
+                <span className="hidden sm:inline font-bold text-sm">Postar Foto</span>
                 <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
               </label>
             </div>
@@ -475,7 +486,7 @@ const App: React.FC = () => {
                 disabled={!newSongTitle.trim() || !newSongArtist.trim()}
                 className={`text-white font-black py-4 rounded-2xl shadow-lg transition-all ${
                   (!newSongTitle.trim() || !newSongArtist.trim()) 
-                  ? 'bg-slate-200 cursor-not-allowed text-slate-400' 
+                  ? 'bg-slate-200 cursor-not-allowed text-slate-400 shadow-none' 
                   : 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/20'
                 }`}
               >
@@ -514,7 +525,7 @@ const MinisterCard: React.FC<{
   onDeleteSong: (id: string) => void; 
 }> = ({ minister, onDelete, onAddSong, onUpdateSong, onDeleteSong }) => {
   return (
-    <div className="bg-white rounded-[3rem] shadow-md border border-slate-100 overflow-hidden flex flex-col hover:shadow-2xl hover:-translate-y-1 transition-all h-full">
+    <div className="bg-white rounded-[3rem] shadow-md border border-slate-100 overflow-hidden flex flex-col hover:shadow-2xl transition-all h-full">
       <div className="bg-slate-50/80 p-7 border-b border-slate-100 flex justify-between items-center">
         <div className="flex items-center gap-4">
           <div className="w-11 h-11 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-100">
