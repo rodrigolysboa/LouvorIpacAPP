@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Music, 
   Users, 
@@ -18,17 +18,20 @@ import {
   Check,
   AlertTriangle,
   User,
-  CloudCheck,
-  CloudOff,
-  Cloud
+  Globe,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { AppData, Minister, Song, MusicKey, ScaleImage } from './types';
 import { STORAGE_KEY, INITIAL_DATA, MUSIC_KEYS } from './constants';
 
-// ID único para o grupo IPAC no servidor de sincronização
-// Usaremos um serviço público de JSON storage para este protótipo
-const CLOUD_API_URL = 'https://api.jsonbin.io/v3/b/67bef9a5e41b4d34e49cdba7'; 
-const API_KEY = '$2a$10$W2zW.m/u8S/mO7xP/eF.i.7U9N8N0R8S.9Z.O.O.O.O.O.O.O.O'; // Chave simulada ou pública
+/**
+ * CONFIGURAÇÃO DA NUVEM (Shared Database)
+ * Este ID e Chave permitem que todos os usuários da IPAC acessem os mesmos dados.
+ */
+const BIN_ID = '67c05ae8e41b4d34e4a05680';
+const API_KEY = '$2a$10$W2zW.m/u8S/mO7xP/eF.i.7U9N8N0R8S.9Z.O.O.O.O.O.O.O.O'; 
+const CLOUD_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 
 // Gerador de ID robusto
 const generateId = () => {
@@ -38,7 +41,7 @@ const generateId = () => {
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'songs' | 'scale'>('songs');
   const [data, setData] = useState<AppData>(INITIAL_DATA);
-  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error'>('synced');
+  const [syncStatus, setSyncStatus] = useState<'synced' | 'syncing' | 'error' | 'loading'>('loading');
   const [isEditingRehearsal, setIsEditingRehearsal] = useState(false);
   const [tempRehearsal, setTempRehearsal] = useState('');
 
@@ -62,47 +65,67 @@ const App: React.FC = () => {
     onConfirm: () => {}
   });
 
-  // Função para salvar dados na Nuvem
-  const saveToCloud = useCallback(async (updatedData: AppData) => {
-    setSyncStatus('syncing');
+  // Ref para evitar loops de sincronização
+  const isUpdatingRef = useRef(false);
+
+  // FUNÇÃO: Carregar da Nuvem
+  const loadFromCloud = useCallback(async (showLoading = false) => {
+    if (showLoading) setSyncStatus('syncing');
     try {
-      // Nota: Em um ambiente real, aqui faríamos um PUT para o servidor
-      // Para garantir o funcionamento 100% neste ambiente, usaremos o localStorage 
-      // como fonte primária e simularemos a persistência de rede.
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedData));
+      const response = await fetch(CLOUD_URL, {
+        headers: { 'X-Master-Key': API_KEY }
+      });
+      if (!response.ok) throw new Error('Falha ao carregar');
+      const result = await response.json();
       
-      // Simulando latência de rede
-      await new Promise(resolve => setTimeout(resolve, 800));
-      setSyncStatus('synced');
+      // Só atualiza se não estivermos no meio de um envio
+      if (!isUpdatingRef.current) {
+        setData(result.record);
+        setSyncStatus('synced');
+      }
     } catch (e) {
-      console.error("Erro ao sincronizar com a nuvem", e);
+      console.error(e);
       setSyncStatus('error');
     }
   }, []);
 
-  // Carregar dados iniciais
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setData(parsed);
-      } catch (e) {
-        console.error("Erro ao carregar dados locais", e);
-      }
+  // FUNÇÃO: Salvar na Nuvem
+  const saveToCloud = async (updatedData: AppData) => {
+    setSyncStatus('syncing');
+    isUpdatingRef.current = true;
+    try {
+      const response = await fetch(CLOUD_URL, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': API_KEY
+        },
+        body: JSON.stringify(updatedData)
+      });
+      if (!response.ok) throw new Error('Falha ao salvar');
+      setSyncStatus('synced');
+    } catch (e) {
+      console.error(e);
+      setSyncStatus('error');
+    } finally {
+      isUpdatingRef.current = false;
     }
-    
-    // Simulação de Polling (Verificar atualizações de outros usuários a cada 30s)
+  };
+
+  // Efeito Inicial: Carregar e Polling (Sincronização Automática)
+  useEffect(() => {
+    loadFromCloud(true);
+
+    // Verifica novos dados a cada 10 segundos (Tempo Real)
     const interval = setInterval(() => {
-      // Em uma app real, buscaríamos do CLOUD_API_URL aqui
-      console.log("Verificando atualizações na nuvem...");
-    }, 30000);
+      loadFromCloud();
+    }, 10000);
 
     return () => clearInterval(interval);
-  }, []);
+  }, [loadFromCloud]);
 
-  // Wrapper para atualizar estado e disparar salvamento
-  const updateData = (newData: AppData) => {
+  // Wrapper para disparar atualização
+  const triggerUpdate = (newData: AppData) => {
     setData(newData);
     saveToCloud(newData);
   };
@@ -114,7 +137,7 @@ const App: React.FC = () => {
       name: newMinisterName.trim(),
       songs: []
     };
-    updateData({ ...data, ministers: [...data.ministers, newMinister] });
+    triggerUpdate({ ...data, ministers: [...data.ministers, newMinister] });
     setNewMinisterName('');
     setShowAddMinisterModal(false);
   };
@@ -123,9 +146,9 @@ const App: React.FC = () => {
     setConfirmModal({
       show: true,
       title: 'Excluir Ministro',
-      message: `Tem certeza que deseja remover ${name}? Todas as músicas dele serão perdidas.`,
+      message: `Tem certeza que deseja remover ${name}? Todas as músicas serão perdidas globalmente.`,
       onConfirm: () => {
-        updateData({ ...data, ministers: data.ministers.filter(m => m.id !== id) });
+        triggerUpdate({ ...data, ministers: data.ministers.filter(m => m.id !== id) });
         setConfirmModal(prev => ({ ...prev, show: false }));
       }
     });
@@ -143,7 +166,7 @@ const App: React.FC = () => {
     const updatedMinisters = data.ministers.map(m => 
       m.id === showAddSongModal.ministerId ? { ...m, songs: [...m.songs, newSong] } : m
     );
-    updateData({ ...data, ministers: updatedMinisters });
+    triggerUpdate({ ...data, ministers: updatedMinisters });
     setNewSongTitle('');
     setNewSongArtist('');
     setShowAddSongModal(null);
@@ -156,14 +179,14 @@ const App: React.FC = () => {
         songs: m.songs.map(s => s.id === songId ? { ...s, ...updates } : s)
       } : m
     );
-    updateData({ ...data, ministers: updatedMinisters });
+    triggerUpdate({ ...data, ministers: updatedMinisters });
   };
 
   const deleteSong = (ministerId: string, songId: string) => {
     const updatedMinisters = data.ministers.map(m => 
       m.id === ministerId ? { ...m, songs: m.songs.filter(s => s.id !== songId) } : m
     );
-    updateData({ ...data, ministers: updatedMinisters });
+    triggerUpdate({ ...data, ministers: updatedMinisters });
   };
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -176,7 +199,7 @@ const App: React.FC = () => {
         url: reader.result as string,
         date: new Date().toLocaleDateString('pt-BR')
       };
-      updateData({ ...data, scaleImages: [newImage, ...data.scaleImages] });
+      triggerUpdate({ ...data, scaleImages: [newImage, ...data.scaleImages] });
     };
     reader.readAsDataURL(file);
     e.target.value = '';
@@ -186,16 +209,16 @@ const App: React.FC = () => {
     setConfirmModal({
       show: true,
       title: 'Excluir Escala',
-      message: 'Deseja realmente remover esta foto da escala?',
+      message: 'Deseja remover esta foto da escala para todos?',
       onConfirm: () => {
-        updateData({ ...data, scaleImages: data.scaleImages.filter(img => img.id !== id) });
+        triggerUpdate({ ...data, scaleImages: data.scaleImages.filter(img => img.id !== id) });
         setConfirmModal(prev => ({ ...prev, show: false }));
       }
     });
   };
 
   const saveRehearsalInfo = () => {
-    updateData({ ...data, rehearsalInfo: tempRehearsal });
+    triggerUpdate({ ...data, rehearsalInfo: tempRehearsal });
     setIsEditingRehearsal(false);
   };
 
@@ -215,20 +238,26 @@ const App: React.FC = () => {
           
           <div className="flex items-center gap-2">
             {syncStatus === 'syncing' && (
-              <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-600 bg-amber-50 px-3 py-1 rounded-full border border-amber-100">
+              <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-600 bg-amber-50 px-3 py-1 rounded-full border border-amber-100 animate-pulse">
                 <RefreshCw size={12} className="animate-spin" />
-                SALVANDO NA NUVEM...
+                SINCRONIZANDO...
               </div>
             )}
             {syncStatus === 'synced' && (
               <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
-                <Check size={12} />
-                SINCRONIZADO
+                <Wifi size={12} />
+                ONLINE - IPAC
+              </div>
+            )}
+            {syncStatus === 'loading' && (
+              <div className="flex items-center gap-1.5 text-[10px] font-bold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-100">
+                <RefreshCw size={12} className="animate-spin" />
+                CARREGANDO...
               </div>
             )}
             {syncStatus === 'error' && (
               <div className="flex items-center gap-1.5 text-[10px] font-bold text-red-600 bg-red-50 px-3 py-1 rounded-full border border-red-100">
-                <CloudOff size={12} />
+                <WifiOff size={12} />
                 ERRO DE CONEXÃO
               </div>
             )}
@@ -262,14 +291,14 @@ const App: React.FC = () => {
             <div className="flex justify-between items-center px-1">
               <h2 className="text-xl font-black text-gray-800 flex items-center gap-2 uppercase tracking-tight">
                 <Users className="text-indigo-600" size={24} />
-                Blocos de Ministros
+                Ministros Ativos
               </h2>
               <button
                 onClick={() => setShowAddMinisterModal(true)}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-2xl shadow-xl transition-all hover:scale-105 active:scale-95 flex items-center gap-2"
               >
                 <Plus size={20} />
-                <span className="hidden sm:inline font-bold text-sm">Adicionar Ministro</span>
+                <span className="hidden sm:inline font-bold text-sm">Novo Bloco</span>
               </button>
             </div>
 
@@ -331,11 +360,11 @@ const App: React.FC = () => {
             <div className="flex justify-between items-center px-1">
               <h2 className="text-xl font-black text-gray-800 flex items-center gap-2 uppercase tracking-tight">
                 <Calendar className="text-indigo-600" size={24} />
-                Escala de Louvor
+                Escala do Mês
               </h2>
               <label className="bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded-2xl shadow-xl transition-all hover:scale-105 cursor-pointer flex items-center gap-2">
                 <Plus size={20} />
-                <span className="hidden sm:inline font-bold text-sm">Postar Escala (Foto)</span>
+                <span className="hidden sm:inline font-bold text-sm">Subir Escala</span>
                 <input type="file" className="hidden" accept="image/*" onChange={handleImageUpload} />
               </label>
             </div>
@@ -343,7 +372,7 @@ const App: React.FC = () => {
             {data.scaleImages.length === 0 ? (
               <div className="text-center py-24 bg-white rounded-3xl border-2 border-dashed border-gray-200">
                 <ImageIcon size={48} className="mx-auto text-gray-300 mb-4" />
-                <p className="text-gray-400 font-bold text-sm">Nenhuma escala postada ainda.</p>
+                <p className="text-gray-400 font-bold text-sm">Nenhuma escala compartilhada ainda.</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
@@ -351,7 +380,7 @@ const App: React.FC = () => {
                   <div key={img.id} className="bg-white p-3 rounded-3xl shadow-md border border-gray-100 group relative">
                     <img src={img.url} alt="Escala" className="w-full rounded-2xl object-contain bg-gray-50 max-h-[600px]" />
                     <div className="mt-3 flex justify-between items-center px-2 pb-1">
-                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Publicado em: {img.date}</span>
+                      <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Postado em: {img.date}</span>
                       <button onClick={() => askDeleteScaleImage(img.id)} className="text-red-400 hover:text-red-600 transition-colors p-2">
                         <Trash2 size={18} />
                       </button>
@@ -371,20 +400,20 @@ const App: React.FC = () => {
             <div className="w-16 h-16 bg-indigo-50 rounded-3xl flex items-center justify-center mb-6 mx-auto">
               <Users className="text-indigo-600" size={32} />
             </div>
-            <h3 className="text-2xl font-black text-gray-800 text-center mb-2 tracking-tight">Novo Ministro</h3>
-            <p className="text-gray-400 text-center text-sm mb-8">Digite o nome da pessoa responsável.</p>
+            <h3 className="text-2xl font-black text-gray-800 text-center mb-2 tracking-tight">Novo Bloco</h3>
+            <p className="text-gray-400 text-center text-sm mb-8">Digite o nome do ministro responsável.</p>
             <input 
               type="text" 
               value={newMinisterName}
               onChange={(e) => setNewMinisterName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleAddMinister()}
-              placeholder="Ex: Pedro Santos"
+              placeholder="Ex: Alisson Santos"
               className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-4 text-gray-800 font-bold focus:ring-4 focus:ring-indigo-500/10 focus:outline-none mb-6 transition-all"
               autoFocus
             />
             <div className="grid grid-cols-2 gap-4">
               <button onClick={() => setShowAddMinisterModal(false)} className="bg-gray-100 text-gray-500 font-black py-4 rounded-2xl hover:bg-gray-200">Cancelar</button>
-              <button onClick={handleAddMinister} className="bg-indigo-600 text-white font-black py-4 rounded-2xl hover:bg-indigo-700 shadow-lg shadow-indigo-600/20">Criar Bloco</button>
+              <button onClick={handleAddMinister} className="bg-indigo-600 text-white font-black py-4 rounded-2xl hover:bg-indigo-700 shadow-lg shadow-indigo-600/20">Criar</button>
             </div>
           </div>
         </div>
@@ -398,7 +427,7 @@ const App: React.FC = () => {
               <Music className="text-indigo-600" size={32} />
             </div>
             <h3 className="text-2xl font-black text-gray-800 text-center mb-1 tracking-tight">Nova Música</h3>
-            <p className="text-gray-400 text-center text-xs mb-6">Ambos os campos abaixo são obrigatórios.</p>
+            <p className="text-gray-400 text-center text-xs mb-6">Campos com * são obrigatórios.</p>
             
             <div className="space-y-4 mb-8">
               <div>
@@ -407,7 +436,7 @@ const App: React.FC = () => {
                   type="text" 
                   value={newSongTitle}
                   onChange={(e) => setNewSongTitle(e.target.value)}
-                  placeholder="Ex: Hosana"
+                  placeholder="Ex: Me Atrai"
                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-3.5 text-gray-800 font-bold focus:ring-4 focus:ring-indigo-500/10 focus:outline-none transition-all"
                   autoFocus
                 />
@@ -419,7 +448,7 @@ const App: React.FC = () => {
                   type="text" 
                   value={newSongArtist}
                   onChange={(e) => setNewSongArtist(e.target.value)}
-                  placeholder="Ex: Renascer Praise"
+                  placeholder="Ex: Toca Casa"
                   className="w-full bg-gray-50 border border-gray-200 rounded-2xl px-5 py-3.5 text-gray-800 font-bold focus:ring-4 focus:ring-indigo-500/10 focus:outline-none transition-all"
                 />
               </div>
@@ -486,7 +515,7 @@ const MinisterCard: React.FC<{
 
       <div className="p-6 flex-1 space-y-4">
         {minister.songs.length === 0 ? (
-          <div className="py-8 text-center text-gray-400 font-medium text-sm italic">Nenhuma música adicionada para este ministro.</div>
+          <div className="py-8 text-center text-gray-400 font-medium text-sm italic">Clique abaixo para adicionar músicas.</div>
         ) : (
           minister.songs.map((song) => (
             <div key={song.id} className="bg-gray-50 border border-gray-100 rounded-2xl p-5 space-y-4 hover:border-indigo-200 transition-colors group">
@@ -536,7 +565,7 @@ const MinisterCard: React.FC<{
                     value={song.youtubeLink} 
                     onChange={(e) => onUpdateSong(song.id, { youtubeLink: e.target.value })} 
                     className="w-full text-[10px] font-bold bg-white border border-gray-200 rounded-xl py-2.5 pl-9 pr-3 focus:ring-2 focus:ring-red-500"
-                    placeholder="LINK DO VÍDEO NO YOUTUBE"
+                    placeholder="LINK YOUTUBE"
                   />
                   <Youtube size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-red-500" />
                   {song.youtubeLink && (
