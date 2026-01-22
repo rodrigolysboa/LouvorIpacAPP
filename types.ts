@@ -37,9 +37,14 @@ export interface AuditLog {
   timestamp: string;
 }
 
-export interface AppData {
+export interface Schema {
   ministers: Minister[];
   scaleImages: ScaleImage[];
   rehearsalInfo: string;
+}
+
+export interface AppData {
+  published: Schema;
+  draft: Schema;
   logs: AuditLog[];
 }

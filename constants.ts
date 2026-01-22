@@ -1,20 +1,25 @@
 
-import { MusicKey, AppData } from './types';
+import { MusicKey, AppData, Schema } from './types';
 
 export const MUSIC_KEYS = Object.values(MusicKey);
 
-export const STORAGE_KEY = 'ipac_praise_app_data_v2_audit';
+export const STORAGE_KEY = 'ipac_praise_v3_secure';
 
-export const INITIAL_DATA: AppData = {
+const INITIAL_SCHEMA: Schema = {
   ministers: [
-    { id: 'minister-neto', name: 'Neto', songs: [] },
-    { id: 'minister-mayke', name: 'Mayke', songs: [] },
-    { id: 'minister-alisson', name: 'Alisson', songs: [] },
-    { id: 'minister-lilian', name: 'Lilian', songs: [] },
-    { id: 'minister-andressa', name: 'Andressa', songs: [] },
-    { id: 'minister-carlao', name: 'Carlão', songs: [] },
+    { id: 'm-neto', name: 'Neto', songs: [] },
+    { id: 'm-mayke', name: 'Mayke', songs: [] },
+    { id: 'm-alisson', name: 'Alisson', songs: [] },
+    { id: 'm-lilian', name: 'Lilian', songs: [] },
+    { id: 'm-andressa', name: 'Andressa', songs: [] },
+    { id: 'm-carlao', name: 'Carlão', songs: [] },
   ],
   scaleImages: [],
-  rehearsalInfo: 'Toda Quarta-feira às 19:30 e Domingo às 17:30.\n\nAVISO: Proibido chegar mais que 10 minutos atrasado sem aviso prévio!',
+  rehearsalInfo: 'Agenda Oficial IPAC:\nQuarta: 19:30\nDomingo: 17:30\n\nAtenção com os atrasos!'
+};
+
+export const INITIAL_DATA: AppData = {
+  published: INITIAL_SCHEMA,
+  draft: INITIAL_SCHEMA,
   logs: []
 };
